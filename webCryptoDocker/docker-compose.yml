@@ -1,0 +1,110 @@
+version: '2'
+
+services:
+  sqlite:
+    command: socat TCP-L:12345,fork,reuseaddr EXEC:'sqlite3',pty
+    build:
+      context: ../webCryptoServeur/
+      dockerfile: ../webCryptoDocker/DockerfileSQLite
+    container_name: SQLiteTriplet
+    volumes:
+    - account:/usr/local/monCoffre/account
+
+
+  certificat:
+    build:
+      context: .
+      dockerfile: DockerfileCertificat
+    container_name: Certificat
+    volumes:
+      - certifok:/usr/local/certif/
+
+
+  serveur:
+    build:
+      context: ../webCryptoServeur
+      dockerfile: ../webCryptoDocker/DockerfileServeur
+    container_name: Serveur
+    volumes_from:
+    - sqlite:rw
+    stdin_open: True
+    tty: True
+    depends_on:
+    - sqlite
+    - keycloak_dependency
+    links:
+    - "sqlite:sqlite"
+    networks:
+    - revproxy-network
+
+  reverse_proxy:
+    build:
+      context: ../webCryptoNGINX/
+      dockerfile: ../webCryptoDocker/DockerfileNGINX
+    container_name: RevProxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - certifok:/etc/nginx/certif/
+    stdin_open: True
+    tty: True
+    depends_on:
+      - serveur
+    networks:
+      - revproxy-network
+
+
+  authentification:
+    build:
+      context: ../webCryptoNGINX/
+      dockerfile: ../webCryptoDocker/DockerfileKeycloak
+    container_name: Keycloak
+    depends_on:
+      - postgres_auth
+      - keycloak_dependency
+    environment:
+      - KEYCLOAK_USER=admin
+      - KEYCLOAK_PASSWORD=admin
+      - PROXY_ADDRESS_FORWARDING=true
+    volumes:
+      - keycloakCert:/etc/x509/https
+    networks:
+      - keycloak-network
+      - revproxy-network
+
+
+
+  postgres_auth:
+    image: postgres:11.3
+    container_name: Postgres_auth
+    volumes:
+      - volumeAuthentifie:/var/lib/postgresql/data
+    networks:
+      - keycloak-network
+
+
+
+  keycloak_dependency:
+    build:
+      context: .
+      args:
+        - http_proxy
+        - https_proxy
+        - no_proxy
+      dockerfile: DockerfileKeycloakDependency
+    container_name: Keycloak_dependency
+    volumes:
+      - keycloakCert:/usr/local/certif/
+
+volumes:
+  certifok:
+  volumeAuthentifie:
+  keycloakCert:
+  account:
+
+networks:
+  keycloak-network:
+    driver: bridge
+  revproxy-network:
+    driver: bridge
